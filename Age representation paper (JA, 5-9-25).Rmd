@@ -1,0 +1,2009 @@
+---
+title: "Age representation paper: data analysis"
+author: "Jacob Ausubel"
+date: "5/9/2025"
+output:
+  pdf_document:
+    extra_dependencies: float
+  word_document: default
+  html_document:
+    df_print: paged
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Clearing global environment
+rm(list = ls())
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Reading in packages
+library(haven)
+library(readr)
+library(tidyverse)
+library(estimatr)
+library(readxl)
+library(ggthemes)
+library(texreg)
+library(modelsummary)
+library(lmtest)
+library(sandwich)
+library(margins)
+library(ggpubr)
+library(cowplot)
+library(haven)
+library(lfe)
+library(MASS)
+library(margins)
+library(survey)
+library(cobalt)
+library(arm)
+library(readxl)
+library(fixest)
+library(stargazer)
+library(writexl)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in CEL House data
+CELHouse93to117 <- read_excel("CELHouse93to117Classic-1.xls")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in CEL Senate data
+CELSenate93to117 <- read_excel("CELSenate93to117Classic.xls")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#CEL House data --> filtering to only some Congresses
+CEL_house <- CELHouse93to117 %>%
+  filter(`Congress number` >= 109)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Renaming a column
+CEL_house <- CEL_house %>%
+  rename(rep_icpsr = `ICPSR number, according to Poole and Rosenthal`)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Making one of the variables numeric
+CEL_house$rep_icpsr <- as.numeric(CEL_house$rep_icpsr)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#At the moment, the CEL dataset only includes the year 
+  #at the start of the Congress
+#To make merges easier late, I'm creating a new version 
+  #of the data frame that twice as many rows
+#As opposed to just having 2005, 2007, 2009..., I'm having
+  #2005, 2006, 2007, 2008, 2009...
+#One assumption I'm making: same members of Congress in 
+  #consecutive pairs (e.g., 2005 and 2006)
+#That ISN'T always true. E.g., what if a member of Congress retires
+  #or passes away?
+CEL_house_1 <- CEL_house
+CEL_house_1 <- CEL_house_1 %>%
+  rename(year = `Year at start of Congress`)
+
+CEL_house_2 <- CEL_house_1
+CEL_house_2$year <- CEL_house_2$year + 1
+
+CEL_house_v2 <-
+  rbind(CEL_house_1, CEL_house_2)
+
+#Filtering out DC
+CEL_house_v2 <-
+  CEL_house_v2 %>%
+  filter(`Two-letter state code` != "DC")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating a version of the data frame in which I'm selecting
+  #only some columns
+CEL_house_v3 <- CEL_house_v2 %>%
+  dplyr::select(`Legislator name, as given in THOMAS`, rep_icpsr, year,
+         `First-dimension DW-NOMINATE score`, `100=Dem, 200=Rep, Other`, 
+         `Percent vote received to enter this Congress`,
+         `Seniority, number of terms served counting current`,
+         `Year born`,
+         `LES 1.0`, `1 = female`,
+         `1 = African American`, `1 = Latino/a`,
+         `1 = served in state legislature`,
+         `1 = majority party member`,
+         `1 = Majority party leadership`,
+         `1 = Minority party leadership`) %>%
+  unique()
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding partisanship
+CEL_house_v3$rep_party <- NA
+CEL_house_v3$rep_party[
+  CEL_house_v3$`100=Dem, 200=Rep, Other` == 100
+  ] <- "Democratic"
+CEL_house_v3$rep_party[
+  CEL_house_v3$`100=Dem, 200=Rep, Other` == 200
+  ] <- "Republican"
+CEL_house_v3$rep_party[
+  CEL_house_v3$`100=Dem, 200=Rep, Other` == 328
+  ] <- "Other"
+
+CEL_house_v3$`100=Dem, 200=Rep, Other` <- NULL
+
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Renaming some columns
+CEL_house_v3 <- CEL_house_v3 %>%
+  rename(rep_name = `Legislator name, as given in THOMAS`) %>%
+  rename(rep_dw_nominate = `First-dimension DW-NOMINATE score`) %>%
+  rename(rep_vote_pct = `Percent vote received to enter this Congress`) %>%
+  rename(rep_num_terms = `Seniority, number of terms served counting current`) %>%
+  rename(rep_year_born = `Year born`) %>%
+  rename(rep_les = `LES 1.0`) %>%
+  rename(rep_female = `1 = female`) %>%
+  rename(rep_african_american = `1 = African American`) %>%
+  rename(rep_latino = `1 = Latino/a`) %>%
+  rename(rep_served_state_leg = `1 = served in state legislature`) %>%
+  rename(rep_majority_party_member = `1 = majority party member`) %>%
+  rename(rep_majority_party_leadership = `1 = Majority party leadership`) %>%
+  rename(rep_minority_party_leadership = `1 = Minority party leadership`)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating party leadership variable (either in majority party
+  #or minority party leadership)
+CEL_house_v3$party_leadership <-
+  ifelse(CEL_house_v3$rep_majority_party_leadership == 1 |
+        CEL_house_v3$rep_minority_party_leadership,
+    1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#CEL Senate data --> filtering to only some Congresses
+CEL_senate <- CELSenate93to117 %>%
+  filter(`congress number` >= 109)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Renaming one variable and making it numeric
+CEL_senate <- CEL_senate %>%
+  rename(sen_icpsr = `icpsr number`)
+
+CEL_senate$sen_icpsr <- as.numeric(CEL_senate$sen_icpsr)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#At the moment, the CEL dataset only includes the year 
+  #at the start of the Congress
+#To make merges easier late, I'm creating a new version 
+  #of the data frame that twice as many rows
+#As opposed to just having 2005, 2007, 2009..., I'm having
+  #2005, 2006, 2007, 2008, 2009...
+#One assumption I'm making: same members of Congress in 
+  #consecutive pairs (e.g., 2005 and 2006)
+#That ISN'T always true. E.g., what if a member of Congress retires
+  #or passes away?
+CEL_sen_1 <- CEL_senate
+CEL_sen_1 <- CEL_sen_1 %>%
+  rename(year = `year elected for congress`)
+CEL_sen_1$year <- CEL_sen_1$year+1
+
+CEL_sen_2 <- CEL_sen_1
+CEL_sen_2$year <- CEL_sen_2$year + 1
+
+CEL_senate_v2 <-
+  rbind(CEL_sen_1, CEL_sen_2)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating a version of the data frame in which I'm selecting
+  #only some columns
+CEL_senate_v3 <- CEL_senate_v2 %>%
+  dplyr::select(`last name`, `first name`, sen_icpsr, year,
+         `First dimensions dw-nominate score`, `100=Dem, 200=Rep, Others`, 
+         `vote share in last election`,
+         `seniority`,
+         `Year born`,
+         `LES Classic, not including incorporation in other legislative vehicles`, 
+         `1 if senator is female`,
+         `1 if senator is african american`, `1 if senator is latino`,
+         `1 if senator ever served in state legislature`,
+         `1 if senator is in majority party`,
+         `1 if senator is majority party leader`,
+         `1 if senator is minority party leader`) %>%
+  unique()
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding partisanship
+CEL_senate_v3$sen_party <- NA
+CEL_senate_v3$sen_party[
+  CEL_senate_v3$`100=Dem, 200=Rep, Others` == 100
+  ] <- "Democratic"
+CEL_senate_v3$sen_party[
+  CEL_senate_v3$`100=Dem, 200=Rep, Others` == 200
+  ] <- "Republican"
+CEL_senate_v3$sen_party[
+  CEL_senate_v3$`100=Dem, 200=Rep, Others` == 328
+  ] <- "Other"
+
+CEL_senate_v3$`100=Dem, 200=Rep, Others` <- NULL
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Renaming some columns
+CEL_senate_v3 <- CEL_senate_v3 %>%
+  rename(sen_last_name = `last name`) %>%
+  rename(sen_first_name = `first name`) %>%
+  rename(sen_dw_nominate = `First dimensions dw-nominate score`) %>%
+  rename(sen_vote_pct = `vote share in last election`) %>%
+  rename(sen_num_terms = `seniority`) %>%
+  rename(sen_year_born = `Year born`) %>%
+  rename(sen_les = `LES Classic, not including incorporation in other legislative vehicles`) %>%
+  rename(sen_female = `1 if senator is female`) %>%
+  rename(sen_african_american = `1 if senator is african american`) %>%
+  rename(sen_latino = `1 if senator is latino`) %>%
+  rename(sen_served_state_leg = `1 if senator ever served in state legislature`) %>%
+  rename(sen_majority_party_member = `1 if senator is in majority party`) %>%
+  rename(sen_majority_party_leadership = `1 if senator is majority party leader`) %>%
+  rename(sen_minority_party_leadership = `1 if senator is minority party leader`)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating party leadership variable (either in majority party
+  #or minority party leadership)
+CEL_senate_v3$party_leadership <-
+  ifelse(CEL_senate_v3$sen_majority_party_leadership == 1 |
+         CEL_senate_v3$sen_minority_party_leadership,
+    1, 0)
+```
+
+# Analysis of Governors
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in cumulative CCES data
+cces_2006_2022 <- read_dta("cumulative_2006-2022.dta")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating state abb variable
+cces_2006_2022$state_abb <-
+  substr(cces_2006_2022$cd, 1, 2)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding Governor name variable
+cces_2006_2022$gov_current <-
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)", 
+  "", cces_2006_2022$gov_current, 
+  ignore.case = TRUE)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding Governor name variable
+cces_2006_2022$gov_current <- 
+  gsub("\\(I\\)", "", cces_2006_2022$gov_current)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding Governor name variable
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'August William "Bill" Ritter, Jr.'
+  ] <- "Bill Ritter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Beverly 'Bev' Perdue"
+  ] <- "Beverly Perdue"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Brian David Schweitzer"
+  ] <- "Brian Schweitzer"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'C. L. "Butch" Otter'
+  ] <- "Butch Otter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'C. W. "Butch" Otter'
+  ] <- "Butch Otter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "C.L. 'Butch' Otter"
+  ] <- "Butch Otter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'C.L. "Butch" Otter'
+  ] <- "Butch Otter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Charles Bradford "Brad" Henry'
+  ] <- "Brad Henry"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Charles Crist, Jr."
+  ] <- "Charlie Crist"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Charles D. Baker"
+  ] <- "Charlie Baker"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Chester 'Chet' Culver"
+  ] <- "Chet Culver"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Chester J. "Chet" Culver'
+  ] <- "Chet Culver"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Chester John "Chet" Culver'
+  ] <- "Chet Culver"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Christine O\'Grady "Chris" Gregoire'
+  ] <- "Christine Gregoire"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Chris Gregoire"
+  ] <- "Christine Gregoire"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Clement 'Butch' Otter"
+  ] <- "Butch Otter"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Dan McKee"
+  ] <- "Daniel McKee"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Dan Malloy"
+  ] <- "Dannel Malloy"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Dannel P. Malloy"
+  ] <- "Dannel Malloy"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'David Duane "Dave" Freudenthal'
+  ] <- "Dave Freudenthal"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'David Alexander Paterson'
+  ] <- "David Paterson"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Deval Laurdine Patrick'
+  ] <- "Deval Patrick"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Don Carcieri'
+  ] <- "Donald Carcieri"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Donald L. "Don" Carcieri'
+  ] <- "Donald Carcieri"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Ed Rendell'
+  ] <- "Edward Rendell"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Edward Gene "Ed" Rendell'
+  ] <- "Edward Rendell"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'George Ervin "Sonny" Perdue, III'
+  ] <- "Sonny Perdue"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Haley Reeves Barbour"
+  ] <- "Haley Barbour"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James Arthur "Jim" Gibbons'
+  ] <- "Jim Gibbons"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James Edward "Jim" Doyle'
+  ] <- "Jim Doyle"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James Gibbons'
+  ] <- "Jim Gibbons"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James H. "Jim" Douglas'
+  ] <- "Jim Douglas"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James H. Douglas'
+  ] <- "Jim Douglas"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'James Richard "Rick" Perry'
+  ] <- "Rick Perry"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Jennifer M. Granholm'
+  ] <- "Jennifer Granholm"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Jennifer Mulhern Granholm'
+  ] <- "Jennifer Granholm"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Joe Manchin III'
+  ] <- "Joe Manchin"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'John C. Carney Jr.'
+  ] <- "John Carney"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'John Henry Hoeven III'
+  ] <- "John Hoeven"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Jon Huntsman Jr.'
+  ] <- "Jon Huntsman"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Jon Huntsman, Jr.'
+  ] <- "Jon Huntsman"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Jon Stevens Corzine'
+  ] <- "Jon Corzine"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Joseph "Joe" Manchin III'
+  ] <- "Joe Manchin"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Marion Michael "Mike" Rounds'
+  ] <- "Mike Rounds"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Marshall 'Mark' Sanford, Jr."
+  ] <- "Mark Sanford"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Marshall Clement "Mark" Sanford, Jr.'
+  ] <- "Mark Sanford"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Martin Joseph O'Malley"
+  ] <- "Martin O'Malley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Michael Dale "Mike" Beebe'
+  ] <- "Mike Beebe"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Mike Easley'
+  ] <- "Michael Easley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Mitchell Elias Daniels, Jr.'
+  ] <- "Mitch Daniels"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Nikki R. Haley'
+  ] <- "Nikki Haley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Nimrata 'Nikki' Haley"
+  ] <- "Nikki Haley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Philip Norman "Phil" Bredesen'
+  ] <- "Phil Bredesen"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Phillip Scott'
+  ] <- "Phil Scott"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Piyush 'Bobby' Jindal"
+  ] <- "Bobby Jindal"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Piyush "Bobby" Jindal'
+  ] <- "Bobby Jindal"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Robert J. Bently'
+  ] <- "Robert J. Bentley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Ruth Anne Minner'
+  ] <- "Ruth Ann Minner"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Steven Lynn "Steve" Beshear'
+  ] <- "Steve Beshear"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Theodore R. "Ted" Kulongoski'
+  ] <- "Theodore Kulongoski"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Timothy James Pawlenty'
+  ] <- "Tim Pawlenty"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Timothy Michael "Tim" Kaine'
+  ] <- "Tim Kaine"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "William 'Bill' Richardson"
+  ] <- "Bill Richardson"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'William Blaine "Bill" Richardson, III'
+  ] <- "Bill Richardson"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Robert Renfroe "Bob" Riley'
+  ] <- "Bob Riley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Robert J. Bentley'
+  ] <- "Robert Bentley"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Pat Quinn'
+  ] <- "Patrick Quinn"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'John Edwards'
+  ] <- "John Bel Edwards"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'John Elias Baldacci'
+  ] <- "John Baldacci"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'David Eugene "Dave" Heineman'
+  ] <- "Dave Heineman"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'John H. Lynch'
+  ] <- "John Lynch"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == 'Ted Kulongoski'
+  ] <- "Theodore Kulongoski"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Lincoln Chafee "
+  ] <- "Lincoln Chafee"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Philip Bredesen"
+  ] <- "Phil Bredesen"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Robert 'Bob' McDonnell"
+  ] <- "Bob McDonnell"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "Bill Walker "
+  ] <- "Bill Walker"
+cces_2006_2022$gov_current[
+  cces_2006_2022$gov_current == "" & 
+  cces_2006_2022$state_abb == "SD"
+  ] <- "Mike Rounds"
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating Governor list
+#governor_list <-
+#  cces_2006_2022 %>%
+#  dplyr::select(gov_current, state_abb) %>%
+#  filter(state_abb != "DC") %>%
+#  unique()
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#For now, I'm keeping Independent Governor Bill Walker in the dataset
+#I'm treating Lincoln Chafee as a Democrat, even though he was
+  #technically an Independent for part of his term
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating Excel file with list of governors
+#library(writexl)
+#write_xlsx(governor_list, "governor_list.xlsx")
+
+#Note that I then added in data about the Governors,
+  #such as the years that they were born in
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in Govenror list dataset
+governor_list <- read_excel("governor_list.xlsx")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Merging CCES data with Governor data
+cces_gov_merge <-
+  merge(cces_2006_2022, 
+        governor_list, 
+        by = c("gov_current", "state_abb"))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating Governor age variable
+cces_gov_merge$gov_age <- 
+  cces_gov_merge$year - 
+  cces_gov_merge$gov_birthYear
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#1 - Strongly approve
+#2 - Approve/Somewhat approve
+#3 - Disapprove/Somewhat disapprove
+#4 - Strongly disapprove
+
+#Recoding Governor approval variable
+cces_gov_merge$approval_gov_v2 <- NA
+cces_gov_merge$approval_gov_v2[
+  cces_gov_merge$approval_gov %in% c(1,2)
+  ] <- 1
+cces_gov_merge$approval_gov_v2[
+  cces_gov_merge$approval_gov %in% c(3,4)
+  ] <- 0
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding PID variable
+#Making 8s and 9s missing data
+cces_gov_merge$pid7[
+  cces_gov_merge$pid7 %in% c(8,9)
+  ] <- NA
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating female dummy variable
+cces_gov_merge$female <-
+  ifelse(cces_gov_merge$gender == 2, 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating college grad dummy variable
+cces_gov_merge$college_grad <- 
+  ifelse(cces_gov_merge$educ %in% c(5,6), 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#In case I need it, creating an education
+  #variable with 3 categories
+cces_gov_merge$educ_recoded <- NA
+cces_gov_merge$educ_recoded[
+  cces_gov_merge$educ %in% c(1,2)
+  ] <- "HS or less"
+cces_gov_merge$educ_recoded[
+  cces_gov_merge$educ %in% c(3,4)
+  ] <- "Some college"
+cces_gov_merge$educ_recoded[
+  cces_gov_merge$educ %in% c(5,6)
+  ] <- "Bachelor's or more"
+
+#Making a factor variable
+cces_gov_merge$educ_recoded <-
+  as.factor(cces_gov_merge$educ_recoded)
+cces_gov_merge$educ_recoded <- relevel(cces_gov_merge$educ_recoded, ref = "HS or less")
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating version of dataset that only includes some of
+  #the columns
+cces_gov_merge_v2 <-
+  cces_gov_merge %>%
+  dplyr::select(gov_current, approval_gov, 
+  approval_gov_v2,
+  gov_gender, gov_age, age, 
+  gov_party, pid7, year, state_abb, college_grad, 
+  educ_recoded, female, 
+  served_state_leg, served_state_executive_office,
+  served_Congress, served_mayor,
+  gov_african_american, gov_latino,
+  weight)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding female Governor variable
+cces_gov_merge_v2$female_gov <-
+  ifelse(cces_gov_merge_v2$gov_gender == "Female", 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Recoding served in state legislature variable
+cces_gov_merge_v2$served_state_leg <-
+  ifelse(cces_gov_merge_v2$served_state_leg == "Yes", 
+         1, 0)
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating new version of data frame
+cces_gov_merge_v3 <-
+  cces_gov_merge_v2
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Filtering out Bill Walker observations (because of him
+  #being an Independent)
+cces_gov_merge_v3 <-
+  cces_gov_merge_v3 %>%
+  filter(gov_current != "Bill Walker")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating separate dummy variables for each year
+cces_gov_year <- 
+  splitfactor(cces_gov_merge_v3$year)
+colnames(cces_gov_year) <-
+  c("year_2007", "year_2008", "year_2009", "year_2010",
+    "year_2011", "year_2012", "year_2013", "year_2014",
+    "year_2015", "year_2016", "year_2017", "year_2018",
+    "year_2019", "year_2020", "year_2021", "year_2022")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Merging in the year columns
+cces_gov_merge_v4 <-
+  cbind(cces_gov_merge_v3, cces_gov_year)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating formula
+formula_string_gov <-
+  paste("approval_gov_v2 ~ age + educ_recoded + female +  
+        gov_age + female_gov + 
+        gov_party * pid7 + gov_african_american +
+        gov_latino + served_state_leg + ", 
+        paste(colnames(cces_gov_year), collapse = " + "))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Running logit model
+fit_gov <- glm(as.formula(formula_string_gov),
+  data = cces_gov_merge_v4,
+  family = "binomial",
+  weights = weight)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Adding robust standard errors
+#Clustering by governor
+#Still expressed in terms of log odds
+robust_results_gov <- coeftest(fit_gov, 
+  vcov = vcovHC(fit_gov, 
+  type = "HC0", 
+  cluster = cces_gov_merge_v4$gov_current))       
+```
+
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Log odds table
+texreg(list(robust_results_gov),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Intercept", "Respondent age", "Governor age"),
+  digits = 4,
+  caption = "Log odds of approving of a governor's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|female_gov|gov_party|pid7|gov_african_american|gov_latino|served_state_leg")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Expressing in terms of probabilities now
+#marginal_effects_gov <- margins(fit_gov, 
+#  vcov = vcovCL(fit_gov, 
+#  cluster = cces_gov_merge_v4$gov_current, type = "HC0"),
+#  type = "response")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving as a .RData object
+#save(marginal_effects_gov, file = "marginal_effects_gov.RData")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Loading in R data
+load("marginal_effects_gov.RData")
+```
+
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Probability odds table
+texreg(list(marginal_effects_gov),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Respondent age", "Governor age"),
+  digits = 4,
+  caption = "Probability odds of approving of a governor's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|female_gov|gov_party|pid7|gov_african_american|gov_latino|served_state_leg")
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Summarizing data into table
+gov_table <- summary(marginal_effects_gov)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some rounding
+gov_table_v2 <- gov_table
+gov_table_v2$AME <- round(gov_table_v2$AME, 4)
+gov_table_v2$SE <- round(gov_table_v2$SE, 4)
+gov_table_v2$z <- round(gov_table_v2$z, 4)
+gov_table_v2$p <- round(gov_table_v2$p, 4)
+gov_table_v2$lower <- round(gov_table_v2$lower, 4)
+gov_table_v2$upper <- round(gov_table_v2$upper, 4)
+```
+
+# Analysis of House Reps
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a new data frame, 
+  #focusing on House representatives
+cces_house <- cces_gov_merge
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Cleaning Representative name variable
+cces_house$rep_current <-
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)", 
+  "", cces_house$rep_current, 
+  ignore.case = TRUE)
+
+cces_house$rep_current <- 
+  gsub("\\(I\\)", "", cces_house$rep_current)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Filtering out respondents where their representative
+  #is unclear
+cces_house <-
+  cces_house %>%
+  filter(!(is.na(rep_icpsr)))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Making ICPSR value numeric
+cces_house$rep_icpsr <-
+  as.numeric(cces_house$rep_icpsr)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Filtering CEL House data to just elected officials
+  #with an ICPSR code
+CEL_house_v4 <-
+  CEL_house_v3 %>%
+  filter(!(is.na(rep_icpsr)))
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Merging together CCES data and CEL House data
+cces_house_merge <-
+  inner_join(cces_house, CEL_house_v4, 
+  by = c("rep_icpsr", "year"))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating age of representative variable
+cces_house_merge$rep_age <- 
+  cces_house_merge$year - 
+  cces_house_merge$rep_year_born
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding House Representative approval variable
+
+#1 - Strongly approve
+#2 - Approve/Somewhat approve
+#3 - Disapprove/Somewhat disapprove
+#4 - Strongly disapprove
+cces_house_merge$approval_rep_v2 <- NA
+cces_house_merge$approval_rep_v2[
+  cces_house_merge$approval_rep %in% c(1,2)
+  ] <- 1
+cces_house_merge$approval_rep_v2[
+  cces_house_merge$approval_rep %in% c(3,4)
+  ] <- 0
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Filtering to just respondents whose representative
+  #is a Democrat or a Republican
+cces_house_merge <-
+  cces_house_merge %>%
+  filter(rep_party != "Other")
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a data frame with dummy variables for years that the survey
+  #took place
+cces_house_year <- splitfactor(cces_house_merge$year)
+colnames(cces_house_year) <-
+  c("year_2007", "year_2008", "year_2009", "year_2010",
+    "year_2011", "year_2012", "year_2013", "year_2014",
+    "year_2015", "year_2016", "year_2017", "year_2018",
+    "year_2019", "year_2020", "year_2021", "year_2022")
+```
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+#Merging together CCES data with years data frame
+cces_house_merge_v2 <-
+  cbind(cces_house_merge, cces_house_year)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating formula
+formula_string_rep <-
+  paste("approval_rep_v2 ~ age + educ_recoded + 
+  female + rep_age +
+  rep_female + rep_dw_nominate * pid7 + 
+  rep_african_american + rep_latino + 
+  rep_served_state_leg + rep_les +
+  rep_majority_party_member + 
+  rep_majority_party_leadership +
+  rep_minority_party_leadership + ", 
+  paste(colnames(cces_house_year), collapse = " + "))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating a version of data frame with only some of
+  #the variables
+cces_house_merge_v3 <-
+  cces_house_merge_v2 %>%
+  dplyr::select(approval_rep_v2, 
+  rep_age, age, educ_recoded,
+  female, rep_female, rep_dw_nominate, pid7, 
+  rep_african_american, rep_latino, rep_served_state_leg, 
+  rep_les, rep_majority_party_member, 
+  rep_majority_party_leadership, rep_minority_party_leadership,
+  year_2007, year_2008, year_2009, year_2010, year_2011,
+  year_2012, year_2013, year_2014, year_2015, year_2016,
+  year_2017, year_2018, year_2019, year_2020, year_2021,
+  year_2022, rep_icpsr, weight, year)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Running regression model
+fit_house <- glm(as.formula(formula_string_rep),
+  data = cces_house_merge_v3,
+  family = "binomial",
+  weights = weight)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Running model with robust standard erros
+#Clustering by representatives
+robust_results_house <- 
+  coeftest(fit_house, 
+  vcov = vcovHC(fit_house, type = "HC0", 
+  cluster = cces_house_merge_v3$rep_icpsr))
+```
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Log odds table
+texreg(list(robust_results_house),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Intercept", "Respondent age", "Representative age"),
+  digits = 4,
+  caption = "Log odds of approving of a representative's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|rep_female|rep_dw_nominate|pid7|rep_african_american|rep_latino|rep_served_state_leg|rep_les|rep_majority_party_member|rep_majority_party_leadership|rep_minority_party_leadership")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Getting probability odds
+#marginal_effects_house <- margins(fit_house, 
+#  vcov = vcovCL(fit_house, 
+#  cluster = cces_house_merge_v3$rep_icpsr, 
+#  type = "HC0"),
+#  type = "response")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving as a .RData object
+#save(marginal_effects_house, file = "marginal_effects_house.RData")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Loading in R data
+load("marginal_effects_house.RData")
+```
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Probability odds table
+texreg(list(marginal_effects_house),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Respondent age", "Representative age"),
+  digits = 4,
+  caption = "Probability odds of approving of a representative's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|rep_female|rep_dw_nominate|pid7|rep_african_american|rep_latino|rep_served_state_leg|rep_les|rep_majority_party_member|rep_majority_party_leadership|rep_minority_party_leadership")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Summarizing marginal effects
+house_table <- summary(marginal_effects_house)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some rounding
+house_table_v2 <- house_table
+house_table_v2$AME <- round(house_table_v2$AME, 4)
+house_table_v2$SE <- round(house_table_v2$SE, 4)
+house_table_v2$z <- round(house_table_v2$z, 4)
+house_table_v2$p <- round(house_table_v2$p, 4)
+house_table_v2$lower <- round(house_table_v2$lower, 4)
+house_table_v2$upper <- round(house_table_v2$upper, 4)
+```
+
+# Analysis of Senators
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a new data frame, 
+  #focusing on Senators
+cces_senate <- cces_gov_merge
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Cleaning Senator 1 name variable
+cces_senate$sen1_current <-
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)", 
+  "", cces_senate$sen1_current, 
+  ignore.case = TRUE)
+
+cces_senate$sen1_current <- 
+  gsub("\\(I\\)", "", cces_senate$sen1_current)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Cleaning Senator 2 name variable
+cces_senate$sen2_current <-
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)", 
+  "", cces_senate$sen2_current, 
+  ignore.case = TRUE)
+
+cces_senate$sen2_current <- 
+  gsub("\\(I\\)", "", cces_senate$sen2_current)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating cleaned version of dataset so that
+  #sen1 and sen2 variables have separate rows
+cces_senate_merge <-
+  cces_senate %>%
+  dplyr::select(sen1_current, sen2_current, 
+  approval_sen1, approval_sen2, age, 
+  pid7, year, state_abb, educ_recoded, female,
+  weight, sen1_icpsr, sen2_icpsr)
+
+cces_senator1 <-
+  cces_senate_merge %>%
+  dplyr::select(-c("sen2_current", "approval_sen2", "sen1_icpsr"))
+cces_senator2 <-
+  cces_senate_merge %>%
+  dplyr::select(-c("sen1_current", "approval_sen1", "sen2_icpsr"))
+
+colnames(cces_senator1)[c(1,2,10)] <-
+  c("sen_current", "approval_sen", "sen_icpsr")
+colnames(cces_senator2)[c(1,2,10)] <-
+  c("sen_current", "approval_sen", "sen_icpsr")
+
+cces_senate_merge_v2 <-
+  rbind(cces_senator1, cces_senator2)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Making ICPSR variable numeric
+cces_senate_merge_v2$sen_icpsr <-
+  as.numeric(cces_senate_merge_v2$sen_icpsr)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Merging data together
+cces_senate_merge_v3 <-
+   inner_join(cces_senate_merge_v2, 
+   CEL_senate_v3, by = c("sen_icpsr", "year"))
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senator approval variable
+
+#1 - Strongly approve
+#2 - Approve/Somewhat approve
+#3 - Disapprove/Somewhat disapprove
+#4 - Strongly disapprove
+cces_senate_merge_v3$approval_sen_v2 <- NA
+cces_senate_merge_v3$approval_sen_v2[
+  cces_senate_merge_v3$approval_sen %in% c(1,2)
+  ] <- 1
+cces_senate_merge_v3$approval_sen_v2[
+  cces_senate_merge_v3$approval_sen %in% c(3,4)
+  ] <- 0
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating Senator age variable
+cces_senate_merge_v3$sen_age <-
+  cces_senate_merge_v3$year - 
+  cces_senate_merge_v3$sen_year_born
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating data frame with dummy variables for years that the survey
+  #has taken place
+cces_senate_year <- splitfactor(cces_senate_merge_v3$year)
+colnames(cces_senate_year) <-
+  c("year_2007", "year_2008", "year_2009", "year_2010",
+    "year_2011", "year_2012", "year_2013", "year_2014",
+    "year_2015", "year_2016", "year_2017", "year_2018",
+    "year_2019", "year_2020", "year_2021", "year_2022")
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Merging together datasets
+cces_senate_merge_v4 <-
+  cbind(cces_senate_merge_v3, cces_senate_year)
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating formula
+formula_string_sen <-
+  paste("approval_sen_v2 ~  age + 
+  educ_recoded + female + sen_age +
+  sen_female + sen_dw_nominate * pid7 + 
+  sen_african_american + sen_latino + 
+  sen_served_state_leg + sen_les +
+  sen_majority_party_member + 
+  sen_majority_party_leadership +
+  sen_minority_party_leadership + ",
+  paste(colnames(cces_senate_year), collapse = " + "))
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Running model
+fit_senate <- glm(as.formula(formula_string_sen),
+  data = cces_senate_merge_v4,
+  family = "binomial",
+  weights = weight)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Robust standard errors, clustering by Senator
+robust_results_senate <- 
+  coeftest(fit_senate, 
+  vcov = vcovHC(fit_senate, 
+  type = "HC0", 
+  cluster = cces_senate_merge_v4$sen_icpsr))
+```
+
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Log odds table
+texreg(list(robust_results_senate),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Intercept", "Respondent age", "Senator age"),
+  digits = 4,
+  caption = "Log odds of approving of a senator's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|sen_female|sen_dw_nominate|pid7|sen_african_american|sen_latino|sen_served_state_leg|sen_les|sen_majority_party_member|sen_majority_party_leadership|sen_minority_party_leadership")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Getting probability odds
+#marginal_effects_senate <- margins(fit_senate, 
+#  vcov = vcovCL(fit_senate, 
+#  cluster = cces_senate_merge_v4$sen_icpsr, 
+#  type = "HC0"),
+#  type = "response")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving as a .RData object
+#save(marginal_effects_senate, file = "marginal_effects_senate.RData")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Loading in R data
+load("marginal_effects_senate.RData")
+```
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Probability odds table
+texreg(list(marginal_effects_senate),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Respondent age", "Senator age"),
+  digits = 4,
+  caption = "Probability odds of approving of a senator's job performance", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|sen_female|sen_dw_nominate|pid7|sen_african_american|sen_latino|sen_served_state_leg|sen_les|sen_majority_party_member|sen_majority_party_leadership|sen_minority_party_leadership")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Summarizing marginal effects
+senate_table <- summary(marginal_effects_senate)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some rounding
+senate_table_v2 <- senate_table
+senate_table_v2$AME <- round(senate_table_v2$AME, 4)
+senate_table_v2$SE <- round(senate_table_v2$SE, 4)
+senate_table_v2$z <- round(senate_table_v2$z, 4)
+senate_table_v2$p <- round(senate_table_v2$p, 4)
+senate_table_v2$lower <- round(senate_table_v2$lower, 4)
+senate_table_v2$upper <- round(senate_table_v2$upper, 4)
+```
+
+# Graph for all three types of elected officials
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating a data frame with marginal effects for all three
+  #types of elected officials
+gov_house_sen_df <- data.frame(
+  factor = factor(rep(NA, 3)),
+  AME = rep(NA, 3),
+  SE = rep(NA, 3),
+  z = rep(NA, 3),
+  p = rep(NA, 3),
+  lower = rep(NA, 3),
+  upper = rep(NA, 3)
+)
+
+gov_house_sen_df[1,2:7] <- gov_table[gov_table$factor == "gov_age",2:7]
+gov_house_sen_df[2,2:7] <- house_table[house_table$factor == "rep_age",2:7]
+gov_house_sen_df[3,2:7] <- senate_table[senate_table$factor == "sen_age",2:7]
+
+gov_house_sen_df$factor <- c("gov_age", "rep_age", "sen_age")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving dataset
+gov_house_sen_df <- saveRDS(gov_house_sen_df, file = "gov_house_sen_df.rds")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in dataset
+gov_house_sen_df <- readRDS("~/Desktop/GW - 2024-25/Fall 2024/Second Year Paper/September/More data analysis for 2nd year paper/gov_house_sen_df.rds")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some data cleaning
+gov_house_sen_df$var <- 1:3
+
+gov_house_sen_df$factor <-
+  c("Governor", "Representative", "Senator")
+
+gov_house_sen_df <-
+  gov_house_sen_df %>%
+  rename(`Elected office` = factor)
+```
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+#Creating graph
+gov_house_sen_df %>%
+  ggplot(aes(x=var, y=AME, color = `Elected office`)) +
+  geom_point() +
+  geom_segment(aes(x = var, y = lower, xend = var, yend = upper)) +
+  scale_x_continuous(breaks=c(1:3),
+      expand = expansion(mult = 0.3),
+      labels=c("Governor", "House Rep", "Senator")) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "purple") +
+  xlab("Elected official") +
+  ylab("Relationship b/n \nage and approval") +
+  #scale_y_continuous(limits = c(-0.012, 0.004)) +
+  theme_classic() +
+  scale_color_manual(
+    values = c(
+    "Governor" = "blue",
+    "Representative" = "red",
+    "Senator" = "darkgreen")) +
+   theme(aspect.ratio = 1/3)
+```
+
+# Analysis of Senate candidates
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a new data frame, 
+  #focusing on Senate candidates
+cces_voted_senate <- cces_gov_merge
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating Senate candidate variable
+cces_voted_senate$sen_candidate_cleaned <- 
+  cces_voted_senate$voted_sen_chosen
+#Recoding values with missing names as missing data
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == ""] <- NA
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Filtering out people with missing values for the
+  #Senate candidate who they voted for
+cces_voted_senate <-
+  cces_voted_senate %>%
+  dplyr::filter(is.na(cces_voted_senate$sen_candidate_cleaned) == FALSE)
+
+#Treating Angus King as a Democrat
+cces_voted_senate$voted_sen_party[
+  cces_voted_senate$sen_candidate_cleaned == "Angus King (I)"
+  ] <- 1
+
+#Treating Bernie Sanders as a Democrat
+cces_voted_senate$voted_sen_party[
+  cces_voted_senate$sen_candidate_cleaned == "Bernard Sanders (I)"
+  ] <- 1
+cces_voted_senate$voted_sen_party[
+  cces_voted_senate$sen_candidate_cleaned == "Bernie Sanders (I)"
+  ] <- 1
+
+#Filtering to just people who voted for a Democrat or
+  #a Republican for the Senate
+cces_voted_senate <-
+  cces_voted_senate %>%
+  dplyr::filter(voted_sen_party %in% c(1,2))     
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senate candidate name variable
+cces_voted_senate$sen_candidate_cleaned <- 
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)|\\s*\\(I\\)", "", cces_voted_senate$sen_candidate_cleaned)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senate candidate name variable
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == 'Alexander \"Alexi\" Giannoulias'
+  ] <- "Alexander Giannoulias"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Alvin M. Greene"
+  ] <- "Alvin Greene"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Barbara A. Mikulski"
+  ] <- "Barbara Mikulski"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Bernard Sanders"
+  ] <- "Bernie Sanders"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Blanche Lambert Lincoln"
+  ] <- "Blanche Lincoln"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Bob Casey, Jr."
+  ] <- "Bob Casey"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Bob Corcker"
+  ] <- "Bob Corker"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Campbell 'Cam' Cavasso"
+  ] <- "Cam Cavasso"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Charles E. Grassley"
+  ] <- "Chuck Grassley"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Charles Grassley"
+  ] <- "Chuck Grassley"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Charles E. Schumer"
+  ] <- "Chuck Schumer"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Charles Schumer"
+  ] <- "Chuck Schumer"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Charles Melancon, Jr."
+  ] <- "Charlie Melancon"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Christopher A. Coons"
+  ] <- "Christopher Coons"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Dan Coats"
+  ] <- "Daniel Coats"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Daniel K. Inouye"
+  ] <- "Daniel Inouye"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Heidei Heitkamp"
+  ] <- "Heidi Heitkamp"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Joe Manchin, III"
+  ] <- "Joe Manchin"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "John McCain, III"
+  ] <- "John McCain"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "John R. Thune"
+  ] <- "John Thune"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "John Isakson"
+  ] <- "Johnny Isakson"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Joseph Sestak, Jr."
+  ] <- "Joe Sestak"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Kendrick B. Meek"
+  ] <- "Kendrick Meek"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Kristen Gillibrand"
+  ] <- "Kirsten Gillibrand"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Linda E. McMahon"
+  ] <- "Linda McMahon"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Mark Steven Kirk"
+  ] <- "Mark Kirk"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == 'Michael \"Mike\" Thurmond'
+  ] <- "Michael Thurmond"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Michael Crapo"
+  ] <- "Mike Crapo"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Michael F. Bennet"
+  ] <- "Michael Bennet"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Orrin G. Hatch"
+  ] <- "Orrin Hatch"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Patrick Toomey"
+  ] <- "Pat Toomey"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Paul W. Hodes"
+  ] <- "Paul Hodes"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Robert Portman"
+  ] <- "Rob Portman"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Russell Feingold"
+  ] <- "Russ Feingold"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Sam F. Granato"
+  ] <- "Sam Granato"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Scott T. McAdams"
+  ] <- "Scott McAdams"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Sherrod C. Brown"
+  ] <- "Sherrod Brown"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Todd C. Young"
+  ] <- "Todd Young"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "William G. Barnes"
+  ] <- "William Barnes"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Thomas R. Carper"
+  ] <- "Tom Carper"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Richard C. Shelby"
+  ] <- "Richard Shelby"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "John R. Raese"
+  ] <- "John Raese"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Joseph Miller"
+  ] <- "Joe Miller"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "James Huffman"
+  ] <- "Jim Huffman"
+cces_voted_senate$sen_candidate_cleaned[
+  cces_voted_senate$sen_candidate_cleaned == "Kenneth Buck"
+  ] <- "Ken Buck"
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding partisanship variable
+senate_candidates_table <- cces_voted_senate %>%
+  dplyr::select(sen_candidate_cleaned, voted_sen_party) %>%
+  unique()
+senate_candidates_table$voted_sen_party <-
+  as.numeric(senate_candidates_table$voted_sen_party)
+senate_candidates_table$voted_sen_party[
+  senate_candidates_table$voted_sen_party == 1
+  ] <- "Democratic"
+senate_candidates_table$voted_sen_party[
+  senate_candidates_table$voted_sen_party == 2
+  ] <- "Republican"
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating table of Senate candidates
+senate_candidates_table <-
+  senate_candidates_table %>%
+  dplyr::arrange(sen_candidate_cleaned)
+
+#Note that Scott Brown ran in both MA and NH
+#Also note that I'm treating Angus King and Bernie Sanders as 
+  #Democrats for the purpose of this analysis
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+# Export list of Senate candidates to Excel
+#write_xlsx(senate_candidates_table, #"senate_candidates_table.xlsx")
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Reading in Excel file with Senate candidates
+senate_candidates <- read_excel("senate_candidates_with_years_born.xlsx")
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senator # 1 variable
+cces_voted_senate$sen1_current_cleaned <- 
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)|\\s*\\(I\\)", "", cces_voted_senate$sen1_current)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senator # 1 variable
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Benjamin L. Cardin"
+  ] <- "Ben Cardin"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Bernard 'Bernie' Sanders"
+  ] <- "Bernie Sanders"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Blanche L. Lincoln"
+  ] <- "Blanche Lincoln"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Bob Casey Jr."
+  ] <- "Bob Casey"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Bob Casey, Jr."
+  ] <- "Bob Casey"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Brian E. Schatz"
+  ] <- "Brian Schatz"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Charles E. Schumer"
+  ] <- "Chuck Schumer"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Dan Coats"
+  ] <- "Daniel Coats"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Daniel K. Akaka"
+  ] <- "Daniel Akaka"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Frank R. Lautenberg"
+  ] <- "Frank Lautenberg"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "James M. Inhofe"
+  ] <- "Jim Inhofe"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Joe Manchin III"
+  ] <- "Joe Manchin"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "John D. Rockefeller IV"
+  ] <- "Jay Rockefeller"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "John F. Kerry"
+  ] <- "John Kerry"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "John McCain, III"
+  ] <- "John McCain"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Joseph I. Lieberman"
+  ] <- "Joe Lieberman"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Joseph R. Biden, Jr."
+  ] <- "Joe Biden"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Kay Bailey Hutchinson"
+  ] <- "Kay Bailey Hutchison"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Mark L. Pryor"
+  ] <- "Mark Pryor"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Mark R. Warner"
+  ] <- "Mark Warner"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Michael B. Enzi"
+  ] <- "Mike Enzi"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Olympia Snowe"
+  ] <- "Olympia J. Snowe"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Orrin G. Hatch"
+  ] <- "Orrin Hatch"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Patrick J. Leahy"
+  ] <- "Patrick Leahy"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Richard C. Shelby"
+  ] <- "Richard Shelby"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Richard J. Durbin"
+  ] <- "Dick Durbin"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Robert P. Casey, Jr."
+  ] <- "Bob Casey"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Samuel Brownback"
+  ] <- "Sam Brownback"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Susan M. Collins"
+  ] <- "Susan Collins"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Thomas R. Carper"
+  ] <- "Tom Carper"
+cces_voted_senate$sen1_current_cleaned[
+  cces_voted_senate$sen1_current_cleaned == "Christopher S. Murphy"
+  ] <- "Chris Murphy"
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senator # 2 variable
+cces_voted_senate$sen2_current_cleaned <- 
+  gsub("\\s*\\(D\\)|\\s*\\(R\\)|\\s*\\(I\\)|\\s*\\(Democratic-Farmer-Labor\\)", "", cces_voted_senate$sen2_current)
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Recoding Senator # 2 variable
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Barbara A. Mikulski"
+  ] <- "Barbara Mikulski"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Byron L. Dorgan"
+  ] <- "Byron Dorgan"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Charles Grassley"
+  ] <- "Chuck Grassley"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Christopher A. Coons"
+  ] <- "Chris Coons"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Dan Coats"
+  ] <- "Daniel Coats"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Daniel K. Inouye"
+  ] <- "Daniel Inouye"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Edward Markey"
+  ] <- "Ed Markey"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Frank R. Lautenberg"
+  ] <- "Frank Lautenberg"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "George V. Voinovich"
+  ] <- "George Voinovich"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "James E. Risch"
+  ] <- "Jim Risch"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Joe Manchin III"
+  ] <- "Joe Manchin"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "John D. Rockefeller, IV"
+  ] <- "Jay Rockefeller"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "John F. Kerry"
+  ] <- "John Kerry"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "John Isakson"
+  ] <- "Johnny Isakson"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Kamala D. Harris"
+  ] <- "Kamala Harris"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Kirsten E. Gillibrand"
+  ] <- "Kirsten Gillibrand"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Mazie K. Hirono"
+  ] <- "Mazie Hirono"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Michael B. Enzi"
+  ] <- "Mike Enzi"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Michael F. Bennet"
+  ] <- "Michael Bennet"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Michael Crapo"
+  ] <- "Mike Crapo"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Robert F. Bennett"
+  ] <- "Robert Bennett"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Roger F. Wicker"
+  ] <- "Roger Wickert"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Russell D. Feingold"
+  ] <- "Russ Feingold"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Scott P. Brown"
+  ] <- "Scott Brown"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Susan M. Collins"
+  ] <- "Susan Collins"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Thomas R. Carper"
+  ] <- "Tom Carper"
+cces_voted_senate$sen2_current_cleaned[
+  cces_voted_senate$sen2_current_cleaned == "Todd C. Young"
+  ] <- "Todd Young"
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Dropping "voted_sen_party" column
+senate_candidates$voted_sen_party <- NULL
+```
+
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Merging together CCES data and Senate candidates dataset
+cces_voted_senate_v2 <-
+  merge(cces_voted_senate,
+    senate_candidates, by = "sen_candidate_cleaned")
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating new variable
+cces_voted_senate_v2$other_elected_experience_sen_candidate_v2 <-
+  ifelse(cces_voted_senate_v2$gov_experience_sen_candidate == 1 | 
+         cces_voted_senate_v2$other_elected_experience_sen_candidate == 1, 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Getting rid of two variables
+cces_voted_senate_v2$gov_experience_sen_candidate <- NULL
+cces_voted_senate_v2$other_elected_experience_sen_candidate <- NULL
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Important: creating age of Senate candidate variable
+cces_voted_senate_v2$age_sen_candidate <-
+  cces_voted_senate_v2$year - cces_voted_senate_v2$year_born_sen_candidate
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating incumbency variable
+cces_voted_senate_v2$incumbent_sen_candidate <-
+  ifelse(cces_voted_senate_v2$sen_candidate_cleaned == 
+    cces_voted_senate_v2$sen1_current_cleaned | cces_voted_senate_v2$sen_candidate_cleaned == 
+    cces_voted_senate_v2$sen2_current_cleaned, 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating variable for whether someone voted for the Democratic
+  #senate candidate
+cces_voted_senate_v2$voted_dem_sen_candidate <-
+  ifelse(cces_voted_senate_v2$voted_sen_party == 1, 1, 0)
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating year dummy variables
+cces_voted_senate_v2 <- cces_voted_senate_v2 %>%
+  mutate(
+    year_2006 = ifelse(year == 2006, 1, 0),
+    year_2008 = ifelse(year == 2008, 1, 0),
+    year_2010 = ifelse(year == 2010, 1, 0),
+    year_2012 = ifelse(year == 2012, 1, 0),
+    year_2014 = ifelse(year == 2014, 1, 0),
+    year_2016 = ifelse(year == 2016, 1, 0),
+    year_2018 = ifelse(year == 2018, 1, 0),
+    year_2020 = ifelse(year == 2020, 1, 0),
+    year_2022 = ifelse(year == 2022, 1, 0)
+  )
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a new data frame
+
+#Each row = a candidate in a specific year
+#If a candidate ran in multiple years, they cover multiple rows
+election_df <- cces_voted_senate_v2 %>%
+  group_by(year, state_abb) %>%
+  dplyr::select(year, state_abb, voted_sen_party, sen_candidate_cleaned,
+    female_sen_candidate, white_sen_candidate, rep_experience_sen_candidate,
+    other_elected_experience_sen_candidate_v2, age_sen_candidate, 
+    incumbent_sen_candidate) %>%
+  unique() %>%
+  mutate(count_rows = n()) %>%
+  dplyr::arrange(year, state_abb, voted_sen_party) %>%
+  dplyr::filter(count_rows == 2) %>%
+  dplyr::filter(
+    (voted_sen_party == 1 & lead(voted_sen_party) == 2) | 
+    (voted_sen_party == 2 & lag(voted_sen_party) == 1)
+  )
+
+#Dropping column
+election_df$count_rows <- NULL
+
+#Renaming columns
+colnames(election_df) <-
+  c("year", "state_abb", "party", "sen_candidate_cleaned", "female", "white", "rep_exp",
+    "other_elected_exp", "age", "incumbent")
+
+#Recoding party variable
+election_df$party <- 
+  as.numeric(election_df$party)
+election_df$party[
+  election_df$party == 1] <- "dem"
+election_df$party[
+  election_df$party == 2] <- "repub"
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating a new data frame
+
+#Each row is now going to be a unique election
+unique_elections_df <- election_df %>%
+  pivot_wider(
+    names_from = party, 
+    values_from = c(sen_candidate_cleaned, female, white, rep_exp, other_elected_exp, age, incumbent),
+    names_glue = "{party}_{.value}")
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Merging together data frames
+cces_voted_senate_v3 <-  
+  merge(cces_voted_senate_v2, unique_elections_df, by = c("year", "state_abb"))
+```
+
+```{r, message = FALSE, warning = FALSE, include = FALSE}
+#Creating formula
+formula_string_sen_candidate <-
+  paste("voted_dem_sen_candidate ~ age + educ_recoded + female +
+        pid7 + dem_age + repub_age + 
+        dem_female + repub_female +
+        dem_white + repub_white +
+        dem_rep_exp + repub_rep_exp +
+        dem_other_elected_exp + repub_other_elected_exp +
+        dem_incumbent + repub_incumbent +
+        year_2008 + year_2010 + year_2012 +
+        year_2014 + year_2016 + year_2018 + year_2020 + year_2022"
+        )
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Running logit model
+fit_senate_candidate <-
+  glm(as.formula(formula_string_sen_candidate),
+  data = cces_voted_senate_v3,
+  family = "binomial",
+  weights = weight)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Robust standard errors, clustering by state
+robust_results_senate_candidate <- 
+  coeftest(fit_senate_candidate, 
+  vcov = vcovHC(fit_senate_candidate, type = "HC0", cluster = cces_voted_senate_v3$state_abb))
+```
+
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Log odds table
+texreg(list(robust_results_senate_candidate),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Intercept", "Respondent age", "Democratic candidate's age",
+      "Republican candidate's age"),
+  digits = 4,
+  caption = "Log odds of voting for the Democratic Senate candidate", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|pid7|dem_female|repub_female|dem_white|repub_white|dem_rep_exp|repub_rep_exp|dem_other_elected_exp|repub_other_elected_exp|dem_incumbent|repub_incumbent")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Getting probability odds
+#marginal_effects_senate_candidate <- 
+#  margins(fit_senate_candidate, 
+#  vcov = vcovCL(fit_senate_candidate, 
+#  cluster = cces_voted_senate_v3$state_abb, 
+#  type = "HC0"),
+#  type = "response")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving as a .RData object
+#save(marginal_effects_senate_candidate, 
+#     file = "marginal_effects_senate_candidate.RData")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Loading in R data
+load("marginal_effects_senate_candidate.RData")
+```
+
+```{r, echo = FALSE, results='asis', warning = FALSE}
+#Probability odds table
+texreg(list(marginal_effects_senate_candidate),
+  include.ci = FALSE,
+  custom.coef.names = 
+    c("Respondent age", "Democratic candidate's age",
+      "Republican candidate's age"),
+  digits = 4,
+  caption = "Probability odds of voting for the Democratic Senate candidate", 
+  caption.above = TRUE, float.pos = "H",
+  custom.model.names = c("Model 1"),
+  omit.coef = "year_|educ_recoded|female|pid7|dem_female|repub_female|dem_white|repub_white|dem_rep_exp|repub_rep_exp|dem_other_elected_exp|repub_other_elected_exp|dem_incumbent|repub_incumbent")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Summarizing marginal effects
+sen_candidate_table <-
+  summary(marginal_effects_senate_candidate)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some rounding
+sen_candidate_table_v2 <- 
+  sen_candidate_table
+sen_candidate_table_v2$AME <- 
+  round(sen_candidate_table_v2$AME, 4)
+sen_candidate_table_v2$SE <- 
+  round(sen_candidate_table_v2$SE, 4)
+sen_candidate_table_v2$z <- 
+  round(sen_candidate_table_v2$z, 4)
+sen_candidate_table_v2$p <- 
+  round(sen_candidate_table_v2$p, 4)
+sen_candidate_table_v2$lower <- 
+  round(sen_candidate_table_v2$lower, 4)
+sen_candidate_table_v2$upper <- 
+  round(sen_candidate_table_v2$upper, 4)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Creating data frame that includes various output from
+  #regression model
+df_candidate <- data.frame(
+  factor = factor(rep(NA, 2)),
+  AME = rep(NA, 2),
+  SE = rep(NA, 2),
+  z = rep(NA, 2),
+  p = rep(NA, 2),
+  lower = rep(NA, 2),
+  upper = rep(NA, 2)
+)
+
+df_candidate[1,2:7] <- sen_candidate_table[
+  sen_candidate_table$factor == "dem_age",2:7]
+df_candidate[2,2:7] <- sen_candidate_table[
+  sen_candidate_table$factor == "repub_age",2:7]
+
+df_candidate$factor <- 
+  c("Dem candidate age", "Rep candidate age")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving under a different name
+senate_candidate_df <- df_candidate
+```
+
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Saving as a R data file
+senate_candidate_df <- 
+  saveRDS(senate_candidate_df, file = "senate_candidate_df.rds")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reading in R data file
+senate_candidate_df <- readRDS("~/Desktop/GW - 2024-25/Fall 2024/Second Year Paper/September/More data analysis for 2nd year paper/senate_candidate_df.rds")
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Doing some data cleaning
+senate_candidate_df$var <- 1:2
+
+senate_candidate_df$factor <-
+  c("Democrat", "Republican")
+
+senate_candidate_df <-
+  senate_candidate_df %>%
+  rename(`Partisanship of candidate` = factor)
+```
+
+```{r, message = FALSE, warning = FALSE, include=FALSE}
+#Reverse coding AME, lower CI, and upper CI for Republican
+senate_candidate_df_v2 <-
+  senate_candidate_df
+
+senate_candidate_df_v2$AME[
+  senate_candidate_df_v2$`Partisanship of candidate` == "Republican"
+] <-
+  -1*senate_candidate_df$AME[
+    senate_candidate_df$`Partisanship of candidate` == "Republican"
+  ]
+
+senate_candidate_df_v2$z[
+  senate_candidate_df_v2$`Partisanship of candidate` == "Republican"
+] <-
+  -1*senate_candidate_df$z[
+    senate_candidate_df$`Partisanship of candidate` == "Republican"
+  ]
+
+senate_candidate_df_v2$lower[
+  senate_candidate_df_v2$`Partisanship of candidate` == "Republican"
+] <-
+  -1*senate_candidate_df$upper[
+    senate_candidate_df$`Partisanship of candidate` == "Republican"
+  ]
+
+senate_candidate_df_v2$upper[
+  senate_candidate_df_v2$`Partisanship of candidate` == "Republican"
+] <-
+  -1*senate_candidate_df$lower[
+    senate_candidate_df$`Partisanship of candidate` == "Republican"
+  ]
+```
+
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+#Creating graph
+senate_candidate_df_v2 %>%
+  ggplot(aes(x=var, y=AME, color = `Partisanship of candidate`)) +
+  geom_point() +
+  geom_segment(aes(x = var, y = lower, xend = var, yend = upper)) +
+  scale_x_continuous(breaks=c(1:2),
+      expand = expansion(mult = 0.3),
+      labels=c("Democrat", "Republican")) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "purple") +
+  xlab("Partisanship of candidate") +
+  ylab("Relationship b/n \nage and approval") +
+  #scale_y_continuous(limits = c(-0.012, 0.004)) +
+  theme_classic() +
+  scale_color_manual(
+    values = c(
+    "Democrat" = "blue",
+    "Republican" = "red")) +
+   theme(aspect.ratio = 1/3)
+```
